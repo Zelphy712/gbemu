@@ -1,6 +1,14 @@
 file_contents: bytes | None = None
-header: dict[str, str | int | bool] = {}
-with open("./roms/Legend of Zelda, The - Link's Awakening (USA, Europe).gb", "rb") as f:
+header: dict[str, str | int | bool | None] = {}
+ROMS = [
+    "Legend of Zelda, The - Link's Awakening (USA, Europe).gb",
+    "tetris.gb",
+    "Castlevania Legends (USA, Europe) (SGB Enhanced).gb",
+    "Gauntlet II (USA, Europe).gb",
+]
+
+
+with open(f"./roms/{ROMS[3]}", "rb") as f:
     file_contents = f.read()
 start_logo = 0x0104
 
@@ -94,7 +102,7 @@ header.setdefault(
 
 header.setdefault("cgb flag", file_contents[0x0143])
 
-old_licensee_map: dict[int, str] = {
+OLD_LICENSEE_MAP: dict[int, str] = {
     0x00: "None",
     0x01: "Nintendo",
     0x08: "Capcom",
@@ -243,7 +251,7 @@ old_licensee_map: dict[int, str] = {
     0xF3: "Extreme Entertainment",
     0xFF: "LJN",
 }
-new_licensee_map: dict[str, str] = {
+NEW_LICENSEE_MAP: dict[str, str] = {
     "00": "None",
     "01": "Nintendo Research & Development 1",
     "08": "Capcom",
@@ -309,10 +317,97 @@ new_licensee_map: dict[str, str] = {
     "BL": "MTO",
     "DK": "Kodansha",
 }
-header.setdefault("old_licensee",old_licensee_map[file_contents[0x014b]])
+header.setdefault("old_licensee", OLD_LICENSEE_MAP[file_contents[0x014B]])
 
-if header.get("old_licensee") == "Indicates that the New licensee code should be used instead.":
-    header.setdefault("new_licensee",new_licensee_map[file_contents[0x0144:0x0145].decode("ascii")])
+if (
+    header.get("old_licensee")
+    == "Indicates that the New licensee code should be used instead."
+):
+    # note: python slices are [inclusive:exclusive] so this bytes 0x0144 and 0x0145.
+    header.setdefault(
+        "new_licensee", NEW_LICENSEE_MAP[file_contents[0x0144:0x0146].decode("ascii")]
+    )
 else:
-    header.setdefault("new_licensee","N/A")
+    header.setdefault("new_licensee", "N/A")
+
+# 3 for True. anything else, usually 0, means False
+header.setdefault("sgb_flag", file_contents[0x0146] == 3)
+
+CARTRIDGE_TYPE_MAP: dict[int, str] = {
+    0x00: "ROM ONLY",
+    0x01: "MBC1",
+    0x02: "MBC1+RAM",
+    0x03: "MBC1+RAM+BATTERY",
+    0x05: "MBC2",
+    0x06: "MBC2+BATTERY",
+    0x08: "ROM+RAM",
+    0x09: "ROM+RAM+BATTERY",
+    0x0B: "MMM01",
+    0x0C: "MMM01+RAM",
+    0x0D: "MMM01+RAM+BATTERY",
+    0x0F: "MBC3+TIMER+BATTERY",
+    0x10: "MBC3+TIMER+RAM+BATTERY",
+    0x11: "MBC3",
+    0x12: "MBC3+RAM",
+    0x13: "MBC3+RAM+BATTERY",
+    0x19: "MBC5",
+    0x1A: "MBC5+RAM",
+    0x1B: "MBC5+RAM+BATTERY",
+    0x1C: "MBC5+RUMBLE",
+    0x1D: "MBC5+RUMBLE+RAM",
+    0x1E: "MBC5+RUMBLE+RAM+BATTERY",
+    0x20: "MBC6",
+    0x22: "MBC7+SENSOR+RUMBLE+RAM+BATTERY",
+    0xFC: "POCKET CAMERA",
+    0xFD: "BANDAI TAMA5",
+    0xFE: "HuC3",
+    0xFF: "HuC1+RAM+BATTERY",
+}
+cartridge_type_code: int = file_contents[0x0147]
+header.setdefault(
+    "cartridge type", CARTRIDGE_TYPE_MAP.get(cartridge_type_code, "UNKNOWN")
+)
+
+
+# This isn't exactly right. technically for 0x52-0x54 we get some middle-y
+# values, but that may be nonsense.
+# see: https://gbdev.io/pandocs/The_Cartridge_Header.html#0148--rom-size
+header.setdefault("ROM size (in KiB)", 32 * (1 << file_contents[0x0148]))
+header.setdefault("ROM banks", 1 << (file_contents[0x0148] + 1))
+
+
+RAM_SIZE_DICT: dict[int, int] = {
+    0: 0,
+    1: 2,  # unused
+    2: 8,
+    3: 32,
+    4: 128,
+    5: 64,
+}
+if "RAM" in header.get("cartridge type", ""):  # type: ignore
+    header.setdefault("RAM size", RAM_SIZE_DICT.get(file_contents[0x0149], None))
+else:
+    header.setdefault("RAM size", 0)
+
+header.setdefault(
+    "destination code",
+    "Japan (and possibly overseas)" if file_contents[0x14A] == 0 else "Overseas Only",
+)
+
+header.setdefault("Mask ROM version number", file_contents[0x014C])
+
+header.setdefault("Header Checksum", file_contents[0x014D])
+
+# checksum check, for fun!
+checksum: int = 0
+for address in range(0x0134, 0x014D):
+    checksum = (checksum - file_contents[address] - 1) & 0xFF
+
+if checksum == header.get("Header Checksum"):
+    print("successful checksum!")
+else:
+    print("illegal!")
+
+
+
 print(header)
